@@ -1,0 +1,29 @@
+name: Fedora 44 validation
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fedora:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container: fedora:44
+    steps:
+      - name: Install Fedora dependencies
+        run: >-
+          dnf install -y git python3 python3-pyyaml ShellCheck curl tar gzip ripgrep
+          niri fcitx5 fcitx5-configtool fcitx5-rime
+          fcitx5-gtk3 fcitx5-gtk4 fcitx5-qt5 fcitx5-qt6 librime-lua librime-tools
+      - uses: actions/checkout@v4
+      - name: Shell syntax and lint
+        run: |
+          bash -n install.sh tests/smoke.sh
+          shellcheck install.sh tests/smoke.sh
+      - name: Configuration and restore tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Real niri validation and Rime dictionary deployment
+        run: bash tests/smoke.sh
