@@ -1,5 +1,6 @@
 """Exercise real installer configuration changes in an isolated temporary HOME."""
 import configparser
+import json
 import os
 from pathlib import Path
 import shutil
@@ -59,10 +60,75 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(text.startswith(self.original.rstrip()))
         self.assertIn('include "', text)
         self.assertIn("配置 with spaces", text)
-        settings = yaml.safe_load((self.config / "fcitx5/rime/default.custom.yaml").read_text())
+        settings = yaml.safe_load((self.data / "fcitx5/rime/default.custom.yaml").read_text())
         self.assertEqual(settings["patch"]["schema_list"], [{"schema": "rime_ice"}])
-        self.assertFalse((self.config / "fcitx5/rime/build/not-for-install.txt").exists())
+        self.assertFalse((self.data / "fcitx5/rime/build/not-for-install.txt").exists())
         self.assertTrue((self.data / "fcitx5/themes/OriDark/theme.conf").exists())
+        self.assertFalse((self.config / "fcitx5/rime").exists())
+
+    def test_legacy_install_migrates_personal_files_to_native_data(self):
+        legacy = self.config / "fcitx5/rime"
+        (legacy / "my.userdb").mkdir(parents=True)
+        (legacy / "my.userdb/data").write_bytes(b"learned words")
+        (legacy / "custom_phrase.txt").write_text("my phrases")
+        (legacy / "default.custom.yaml").write_text("patch:\n  menu/page_size: 9\n")
+        (legacy / "build").mkdir()
+        (legacy / "build/stale.bin").write_bytes(b"old build")
+        self.apply()
+        native = self.data / "fcitx5/rime"
+        self.assertEqual((native / "my.userdb/data").read_bytes(), b"learned words")
+        self.assertEqual((native / "custom_phrase.txt").read_text(), "my phrases")
+        self.assertEqual(yaml.safe_load((native / "default.custom.yaml").read_text())
+                         ["patch"]["menu/page_size"], 9)
+        self.assertFalse((native / "build/stale.bin").exists())
+        self.assertEqual((legacy / "my.userdb/data").read_bytes(), b"learned words")
+
+    def test_migration_preserves_native_customization_and_database_integrity(self):
+        legacy = self.config / "fcitx5/rime"
+        native = self.data / "fcitx5/rime"
+        for path, phrase in [(legacy, "old phrase"), (native, "current phrase")]:
+            (path / "my.userdb").mkdir(parents=True)
+            (path / "custom_phrase.txt").write_text(phrase)
+        (legacy / "my.userdb/obsolete").write_bytes(b"different database")
+        (native / "my.userdb/current").write_bytes(b"active database")
+        self.apply()
+        self.assertEqual((native / "custom_phrase.txt").read_text(), "current phrase")
+        self.assertEqual((native / "my.userdb/current").read_bytes(), b"active database")
+        self.assertFalse((native / "my.userdb/obsolete").exists())
+
+    def test_rollback_after_migration_restores_both_directories(self):
+        legacy = self.config / "fcitx5/rime"
+        legacy.mkdir(parents=True)
+        (legacy / "custom_phrase.txt").write_text("old phrase")
+        backup = self.root / "backup"
+        backup.mkdir()
+        CONFIG["snapshot"](backup)
+        self.apply()
+        CONFIG["restore"](backup)
+        self.assertEqual((legacy / "custom_phrase.txt").read_text(), "old phrase")
+        self.assertFalse((self.data / "fcitx5/rime").exists())
+
+    def test_old_backup_restores_only_original_recorded_paths(self):
+        legacy = self.config / "fcitx5/rime"
+        legacy.mkdir(parents=True)
+        (legacy / "custom_phrase.txt").write_text("saved old phrase")
+        backup = self.root / "old-backup"
+        backup.mkdir()
+        entries = []
+        for index, path in enumerate(CONFIG["paths"](legacy=True)):
+            entries.append({"path": str(path), "exists": path.exists(), "slot": str(index)})
+            if path.is_dir():
+                shutil.copytree(path, backup / str(index))
+            elif path.exists():
+                shutil.copy2(path, backup / str(index))
+        (backup / "manifest.json").write_text(json.dumps(entries))
+        native = self.data / "fcitx5/rime"
+        native.mkdir(parents=True)
+        (native / "custom_phrase.txt").write_text("new native phrase")
+        (legacy / "custom_phrase.txt").write_text("changed old phrase")
+        CONFIG["restore"](backup)
+        self.assertEqual((legacy / "custom_phrase.txt").read_text(), "saved old phrase")
+        self.assertEqual((native / "custom_phrase.txt").read_text(), "new native phrase")
 
     def test_reinstall_has_one_include_and_one_managed_group(self):
         self.apply()
@@ -73,7 +139,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(profile.count("Name=rime"), 1)
         classic = (self.config / "fcitx5/conf/classicui.conf").read_text()
         self.assertIn("Theme=OriLight", classic)
-        selected = yaml.safe_load((self.config / "fcitx5/rime/user.yaml").read_text())
+        selected = yaml.safe_load((self.data / "fcitx5/rime/user.yaml").read_text())
         self.assertEqual(selected["var"]["previously_selected_schema"], "double_pinyin_flypy")
 
     def test_existing_groups_layout_and_custom_settings_survive(self):
@@ -81,8 +147,8 @@ class ConfigTests(unittest.TestCase):
         profile_path.parent.mkdir(parents=True)
         profile_path.write_text('[Groups/0]\nName=Existing\nDefault Layout=de\nDefaultIM=pinyin\n'
                                 '[Groups/0/Items/0]\nName=pinyin\nLayout=\n[GroupOrder]\n0=Existing\n')
-        rime = self.config / "fcitx5/rime"
-        rime.mkdir()
+        rime = self.data / "fcitx5/rime"
+        rime.mkdir(parents=True)
         (rime / "custom_phrase.txt").write_text("my phrases")
         (rime / "my.userdb").mkdir()
         (rime / "my.userdb/data").write_bytes(b"personal data")
@@ -108,7 +174,7 @@ class ConfigTests(unittest.TestCase):
         self.apply()
         CONFIG["restore"](backup)
         self.assertEqual(self.niri.read_text(encoding="utf-8"), self.original)
-        self.assertFalse((self.config / "fcitx5/rime").exists())
+        self.assertFalse((self.data / "fcitx5/rime").exists())
         self.assertFalse((self.config / "niri/fcitx5-ori-ice.kdl").exists())
         self.assertFalse((self.config / "environment.d/90-fcitx5-ori-ice.conf").exists())
         self.assertFalse((self.state / "installed.json").exists())
@@ -159,7 +225,7 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("import-environment XMODIFIERS QT_IM_MODULE QT_IM_MODULES", session)
 
     def test_invalid_custom_yaml_can_be_rolled_back(self):
-        rime = self.config / "fcitx5/rime"
+        rime = self.data / "fcitx5/rime"
         rime.mkdir(parents=True)
         original = "patch: [wrong, type]\n"
         (rime / "default.custom.yaml").write_text(original)

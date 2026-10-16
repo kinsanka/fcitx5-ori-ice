@@ -66,11 +66,11 @@ def write(path, content):
             os.unlink(temp)
 
 
-def paths():
+def paths(legacy=False):
     config = Path(os.environ["CONFIG_ROOT"])
     data = Path(os.environ["DATA_ROOT"])
-    return [
-        config / "fcitx5/rime",
+    targets = [
+        (config if legacy else data) / "fcitx5/rime",
         config / "fcitx5/profile",
         config / "fcitx5/conf/classicui.conf",
         data / "fcitx5/themes/OriDark",
@@ -81,6 +81,9 @@ def paths():
         config / "fcitx5-ori-ice/session.sh",
         Path(os.environ["STATE_ROOT"]) / "installed.json",
     ]
+    if not legacy:
+        targets.append(config / "fcitx5/rime")
+    return targets
 
 
 def preflight(require_niri=True):
@@ -124,8 +127,8 @@ def remove(path):
 def restore(backup):
     backup = Path(backup)
     entries = json.loads((backup / "manifest.json").read_text(encoding="utf-8"))
-    expected = [str(path) for path in paths()]
-    if [entry["path"] for entry in entries] != expected:
+    expected = [[str(path) for path in paths(legacy=old)] for old in [False, True]]
+    if [entry["path"] for entry in entries] not in expected:
         raise ValueError("备份的配置路径与当前环境不一致，拒绝恢复")
     for index, entry in enumerate(entries):
         source = backup / str(index)
@@ -204,6 +207,34 @@ def read(path):
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
+def migrate_legacy_rime(source, target):
+    """Recover missing old-install files; native data always wins conflicts."""
+    if not source.exists():
+        return
+
+    def copy_missing(src, dst):
+        if src.is_symlink() or dst.is_symlink():
+            raise ValueError(f"不迁移符号链接：{src} -> {dst}")
+        if src.is_dir():
+            # A user database/sync snapshot must never be merged file by file.
+            if src.name.endswith(".userdb") or src.name == "sync":
+                if not dst.exists():
+                    shutil.copytree(src, dst)
+                return
+            if dst.exists() and not dst.is_dir():
+                return
+            dst.mkdir(parents=True, exist_ok=True)
+            for child in src.iterdir():
+                copy_missing(child, dst / child.name)
+        elif not dst.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+
+    for child in source.iterdir():
+        if child.name not in {"build", "installation.yaml", "user.yaml"}:
+            copy_missing(child, target / child.name)
+
+
 def apply(work, theme, schema):
     import yaml
     preflight()
@@ -211,7 +242,8 @@ def apply(work, theme, schema):
     data = Path(os.environ["DATA_ROOT"])
     state = Path(os.environ["STATE_ROOT"])
     work = Path(work)
-    rime = config / "fcitx5/rime"
+    rime = data / "fcitx5/rime"
+    migrate_legacy_rime(config / "fcitx5/rime", rime)
     rime.mkdir(parents=True, exist_ok=True)
     # Preserve user dictionaries, *.custom.yaml, sync data and custom phrases.
     # Upstream-owned schemas, dictionaries and Lua code are replaced on update.
@@ -390,8 +422,8 @@ main() {
         cat "$STATE_ROOT/installed.json"
         local selected
         selected=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["schema"])' "$STATE_ROOT/installed.json")
-        [[ -s $CONFIG_ROOT/fcitx5/rime/build/$selected.schema.yaml &&
-           -s $CONFIG_ROOT/fcitx5/rime/build/rime_ice.table.bin &&
+        [[ -s $DATA_ROOT/fcitx5/rime/build/$selected.schema.yaml &&
+           -s $DATA_ROOT/fcitx5/rime/build/rime_ice.table.bin &&
            -f $DATA_ROOT/fcitx5/themes/OriDark/theme.conf &&
            -f $DATA_ROOT/fcitx5/themes/OriLight/theme.conf ]] || die '编译产物或皮肤缺失，请重新安装'
         if running; then log 'Fcitx5 正在运行'; else log 'Fcitx5 未运行；请注销后重新登录 niri'; fi
@@ -449,11 +481,11 @@ main() {
     configure apply "$WORK" "$THEME" "$SCHEMA"
     niri validate -c "$NIRI_CONFIG"
     log '编译雾凇词库，首次部署可能需要几分钟'
-    rime_deployer --build "$CONFIG_ROOT/fcitx5/rime" /usr/share/rime-data \
-        "$CONFIG_ROOT/fcitx5/rime/build" >"$BACKUP/deploy.log" 2>&1 \
+    rime_deployer --build "$DATA_ROOT/fcitx5/rime" /usr/share/rime-data \
+        "$DATA_ROOT/fcitx5/rime/build" >"$BACKUP/deploy.log" 2>&1 \
         || { tail -n 40 "$BACKUP/deploy.log" >&2; die "部署失败，日志：$BACKUP/deploy.log"; }
-    [[ -s $CONFIG_ROOT/fcitx5/rime/build/$SCHEMA.schema.yaml &&
-       -s $CONFIG_ROOT/fcitx5/rime/build/rime_ice.table.bin ]] || die '雾凇编译产物缺失'
+    [[ -s $DATA_ROOT/fcitx5/rime/build/$SCHEMA.schema.yaml &&
+       -s $DATA_ROOT/fcitx5/rime/build/rime_ice.table.bin ]] || die '雾凇编译产物缺失'
     ARMED=0
     printf '%s\n' "$(basename "$BACKUP")" >"$STATE_ROOT/latest-backup"
     log '安装完成。请注销并重新登录 niri，然后用 Ctrl+Space 切换输入法。'

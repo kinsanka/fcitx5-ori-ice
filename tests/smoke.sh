@@ -23,19 +23,25 @@ configure snapshot "$SANDBOX/backup"
 for schema in rime_ice double_pinyin_flypy; do
     configure apply "$WORK" dark "$schema"
     niri validate -c "$NIRI_CONFIG"
-    rime_deployer --build "$CONFIG_ROOT/fcitx5/rime" /usr/share/rime-data \
-        "$CONFIG_ROOT/fcitx5/rime/build" >"$SANDBOX/deploy.log" 2>&1 \
+    rime_deployer --build "$DATA_ROOT/fcitx5/rime" /usr/share/rime-data \
+        "$DATA_ROOT/fcitx5/rime/build" >"$SANDBOX/deploy.log" 2>&1 \
         || { cat "$SANDBOX/deploy.log"; exit 1; }
-    test -s "$CONFIG_ROOT/fcitx5/rime/build/$schema.schema.yaml"
-    test -s "$CONFIG_ROOT/fcitx5/rime/build/rime_ice.table.bin"
+    test -s "$DATA_ROOT/fcitx5/rime/build/$schema.schema.yaml"
+    test -s "$DATA_ROOT/fcitx5/rime/build/rime_ice.table.bin"
     # Compilation can succeed even when a plugin is unavailable: check Lua loading too.
     if rg -i 'error.*(lua|component)|unknown component|failed to load.*lua' "$SANDBOX/deploy.log"; then
         cat "$SANDBOX/deploy.log"
         exit 1
     fi
+    if [[ $schema == rime_ice ]]; then
+        # Test the native addon's actual lookup path, not just files we compiled.
+        XDG_CONFIG_HOME=$CONFIG_ROOT XDG_DATA_HOME=$DATA_ROOT \
+            XDG_STATE_HOME=$STATE_ROOT ORI_ICE_PRIVATE_BUS=1 \
+            dbus-run-session -- python3 tests/runtime_candidates.py
+    fi
 done
 configure restore "$SANDBOX/backup"
 cmp "$NIRI_CONFIG" "$SANDBOX/original.kdl"
-test ! -e "$CONFIG_ROOT/fcitx5/rime"
+test ! -e "$DATA_ROOT/fcitx5/rime"
 niri validate -c "$NIRI_CONFIG"
-printf '\nFedora smoke test passed: niri + full pinyin + flypy + restore.\n'
+printf '\nFedora smoke test passed: niri + full pinyin + Emoji candidates + flypy + restore.\n'

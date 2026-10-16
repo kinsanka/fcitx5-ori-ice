@@ -62,6 +62,8 @@ bash install.sh --theme auto
 
 默认遵守 `XDG_CONFIG_HOME`、`XDG_DATA_HOME` 和 `XDG_STATE_HOME`。使用其他 niri 主配置时，在执行前设置 `NIRI_CONFIG` 为**实际绝对路径**。当前不自动改写符号链接管理的配置目录，检测到会报出路径并停止；请先处理 dotfiles 中的链接布局。
 
+**Rime 词库、OpenCC（含 Emoji）和编译产物统一放在 `${XDG_DATA_HOME:-$HOME/.local/share}/fcitx5/rime`**，与原生 fcitx5-rime 的读取目录一致。旧版误写入 `~/.config/fcitx5/rime` 的个人配置会在再次安装时补入正确目录；同名冲突保留正确目录中的现有文件，已有用户数据库不会混合拼接，旧目录保留并纳入备份。
+
 安装器不会自动终止 IBus，也不会删除原有自启动项。如果原来配置了自动重启 Fcitx5 的 systemd 服务，请先停止该服务，避免备份/部署时进程被重新拉起。
 
 ## 检查、备份与恢复
@@ -76,6 +78,8 @@ bash install.sh --restore 20261016-123456-AbCdEf
 ```
 
 备份在 `${XDG_STATE_HOME:-$HOME/.local/state}/fcitx5-ori-ice/backups/`。恢复时也会先备份当前状态，因此可以再次恢复。`latest` 指最近一次完整备份，反复使用可能在两份状态之间切换。恢复到旧备份会把本包管理的配置和 Rime 数据恢复到那个时间点；期间新增的个人词库数据也会被恢复前备份保存。软件包不卸载。
+
+新版备份同时记录正确的数据目录和旧目录。修复前生成的旧版备份仍可恢复，但仅恢复其清单中的原路径，不会覆盖当时未备份的新数据目录。
 
 部署日志为相应备份目录中的 `deploy.log`。`--check` 检查依赖、niri 语法、主题和词库产物；它不等于在真实应用中完成打字测试。
 
@@ -107,7 +111,7 @@ python3 -m unittest discover -s tests -v
 bash tests/smoke.sh
 ```
 
-Python 测试需要 PyYAML。GitHub Actions 在 Fedora 44 容器中检查 ShellCheck、配置保留和恢复、niri 解析，以及全拼/小鹤方案的实际词库编译。容器检查不覆盖真实 niri 桌面里的候选窗位置、皮肤显示及每个应用的输入行为。
+Python 配置测试需要 PyYAML；完整 smoke 测试还需要 `python3-gobject-base` 和 `dbus-daemon`。GitHub Actions 在 Fedora 44 容器中检查 ShellCheck、配置保留和恢复、niri 解析、全拼/小鹤方案的实际词库编译，并在隔离 D-Bus 会话中启动原生 Fcitx5，验证“开心、苹果、爱心”的 Emoji 候选。测试不会连接现有桌面的输入法；容器检查不覆盖真实 niri 桌面里的候选窗位置、皮肤显示及每个应用的输入行为。
 
 ## 上游与许可
 

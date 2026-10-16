@@ -15,7 +15,7 @@ jobs:
     steps:
       - name: Install Fedora dependencies
         run: >-
-          dnf install -y git python3 python3-pyyaml ShellCheck curl tar gzip ripgrep diffutils
+          dnf install -y git python3 python3-pyyaml python3-gobject-base dbus-daemon ShellCheck curl tar gzip ripgrep diffutils
           niri fcitx5 fcitx5-configtool fcitx5-rime
           fcitx5-gtk3 fcitx5-gtk4 fcitx5-qt5 fcitx5-qt6 librime-lua librime-tools
       - uses: actions/checkout@v4
